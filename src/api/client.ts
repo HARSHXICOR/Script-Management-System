@@ -2,7 +2,7 @@ const API_BASE =
   (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_API_BASE_URL) ||
   import.meta.env.VITE_API_BASE_URL ||
   import.meta.env.NEXT_PUBLIC_API_BASE_URL ||
-  "http://localhost:8080/api";
+  (typeof window !== "undefined" && window.location.hostname !== "localhost" ? "/api" : "http://localhost:8080/api");
 
 const TOKEN_KEY = "rsm_jwt_token";
 
