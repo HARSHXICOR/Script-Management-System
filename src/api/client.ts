@@ -76,7 +76,9 @@ function buildHeaders(): HeadersInit {
 function resolveUrl(path: string, params?: Record<string, string | number | undefined>): string {
   const base = API_BASE.replace(/\/+$/, "");
   const cleanPath = path.startsWith("/") ? path : `/${path}`;
-  const url = new URL(`${base}${cleanPath}`);
+  const fullPath = `${base}${cleanPath}`;
+  const origin = typeof window !== "undefined" ? window.location.origin : "http://localhost:8080";
+  const url = new URL(fullPath, origin);
   if (params) {
     Object.entries(params).forEach(([k, v]) => {
       if (v !== undefined && v !== "") url.searchParams.set(k, String(v));
