@@ -1,23 +1,8 @@
 /**
- * Reel Script Manager - Standalone Backend REST API Server (Node.js ESM)
- * Exact Spring Boot / Spring Security contract:
- * - Shared system categories (Food, Cafe, Car, etc.)
- * - Multi-user script ownership (User <-> Scripts)
- * - JWT authentication & PBKDF2 password hashing
- * - Endpoints:
- *     POST /api/auth/signup
- *     POST /api/auth/login
- *     GET  /api/auth/me
- *     GET  /api/scripts
- *     GET  /api/scripts/:id
- *     GET  /api/scripts/search
- *     POST /api/scripts
- *     PUT  /api/scripts/:id
- *     DELETE /api/scripts/:id
- *     GET  /api/categories
- *     POST /api/categories
- *     PUT  /api/categories/:id
- *     DELETE /api/categories/:id
+ * Reel Script Manager - Fullstack Node.js Web Server (ESM)
+ * Serves both:
+ * 1. REST API under /api/*
+ * 2. Static Frontend (dist/ folder) for all other web requests
  */
 
 import http from "node:http";
@@ -28,9 +13,27 @@ import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const ROOT_DIR = path.resolve(__dirname, "..");
+const DIST_DIR = path.join(ROOT_DIR, "dist");
 const DB_FILE = path.join(__dirname, "db.json");
 const PORT = process.env.PORT || 8080;
 const JWT_SECRET = process.env.JWT_SECRET || "reel-script-manager-super-secret-key-2026";
+
+// MIME types for static assets
+const MIME_TYPES = {
+  ".html": "text/html",
+  ".css": "text/css",
+  ".js": "application/javascript",
+  ".json": "application/json",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".gif": "image/gif",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
+};
 
 // ----------------------------------------------------
 // Crypto Helpers (PBKDF2 Password Hashing & Simple JWT)
@@ -168,42 +171,6 @@ function initDb() {
         createdAt: new Date(Date.now() - 86400000).toISOString(),
         updatedAt: new Date(Date.now() - 86400000).toISOString(),
       },
-      {
-        id: 3,
-        userId: 1,
-        title: "Hidden Highway Dhaba Near IIT Kharagpur",
-        scriptText:
-          "Save this Reel right now because this hidden dhaba serves the best Tadka and Butter Naan in all of Kharagpur! 🥘\n\nLocated just 4km from IIT Main Gate on the bypass road, Sharma Punjabi Dhaba has been quietly feeding truckers and students for 15 years.\n\nMust-order items:\n1. Dal Tadka with double butter\n2. Kadhai Paneer (super smoky!)\n3. Tandoori Roti with fresh churned white butter\n\nTotal bill for two? Just ₹280. Share this with your hostel gang!\n\n#IITKharagpur #KharagpurEats #DhabaFood #HighwayEats",
-        category: SEED_CATEGORIES[0],
-        status: "PUBLISHED",
-        deleted: false,
-        createdAt: new Date(Date.now() - 172800000).toISOString(),
-        updatedAt: new Date(Date.now() - 86400000).toISOString(),
-      },
-      {
-        id: 4,
-        userId: 1,
-        title: "Top 3 Sunset Spots in Kharagpur",
-        scriptText:
-          "Looking for peaceful spots to catch the sunset this weekend? Here are the top 3 spots in Kharagpur you probably didn't know about: 🌅\n\n1. Hijli Forest Watch Tower — untouched nature and bird chirping\n2. Kansai River Banks — golden hour reflections on the water\n3. Nehru Museum Back Lawns — heritage feel with wide open skies\n\nTag the friend you want to visit these places with!\n\n#KharagpurDiaries #SunsetSpots #TravelKGP #WestBengalTravel",
-        category: SEED_CATEGORIES[10],
-        status: "READY",
-        deleted: false,
-        createdAt: new Date(Date.now() - 259200000).toISOString(),
-        updatedAt: new Date(Date.now() - 172800000).toISOString(),
-      },
-      {
-        id: 5,
-        userId: 1,
-        title: "Student Budget Tech Accessories Under ₹500",
-        scriptText:
-          "Top 3 student-friendly tech gadgets from Kharagpur Market that actually last! ⚡\n\n1. Braided 65W Fast Charging Cable (₹199)\n2. Aluminum Laptop Stand for long study sessions (₹349)\n3. Cable organizer clips set of 6 (₹99)\n\nAvailable at Modern Electronics, Golbazar. Show this Reel for 5% extra discount!\n\n#StudentBudget #TechAccessories #KharagpurShopping #GadgetReels",
-        category: SEED_CATEGORIES[11],
-        status: "PUBLISHED",
-        deleted: false,
-        createdAt: new Date(Date.now() - 345600000).toISOString(),
-        updatedAt: new Date(Date.now() - 259200000).toISOString(),
-      },
     ],
     nextCatId: 100,
     nextScriptId: 100,
@@ -214,7 +181,11 @@ function initDb() {
 }
 
 function saveDb(data) {
-  fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), "utf-8");
+  try {
+    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), "utf-8");
+  } catch (err) {
+    console.error("Failed to write db.json:", err);
+  }
 }
 
 let db = initDb();
@@ -267,6 +238,31 @@ function extractAuthenticatedUser(req) {
   return { id: user.id, name: user.name, email: user.email };
 }
 
+// Static file server helper for frontend
+function serveStaticFile(req, res, pathname) {
+  let filePath = path.join(DIST_DIR, pathname);
+  if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+    filePath = path.join(DIST_DIR, "index.html");
+  }
+
+  if (!fs.existsSync(filePath)) {
+    res.writeHead(200, { "Content-Type": "text/html" });
+    return res.end("<h1>Reel Script Manager is Building...</h1><p>Please refresh in a moment.</p>");
+  }
+
+  const ext = path.extname(filePath).toLowerCase();
+  const contentType = MIME_TYPES[ext] || "application/octet-stream";
+
+  fs.readFile(filePath, (err, content) => {
+    if (err) {
+      res.writeHead(500);
+      return res.end("Server Error");
+    }
+    res.writeHead(200, { "Content-Type": contentType });
+    res.end(content, "utf-8");
+  });
+}
+
 const server = http.createServer(async (req, res) => {
   const parsedUrl = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
   const pathname = parsedUrl.pathname;
@@ -280,6 +276,13 @@ const server = http.createServer(async (req, res) => {
       "Access-Control-Allow-Headers": "Content-Type, Authorization",
     });
     return res.end();
+  }
+
+  // ----------------------------------------------------
+  // Non-API routes: Serve Frontend SPA
+  // ----------------------------------------------------
+  if (!pathname.startsWith("/api")) {
+    return serveStaticFile(req, res, pathname);
   }
 
   try {
@@ -532,7 +535,6 @@ const server = http.createServer(async (req, res) => {
 
       const script = db.scripts[scriptIndex];
 
-      // Ownership enforcement check
       if (script.userId !== activeUserId) {
         return sendError(res, 403, "FORBIDDEN", "You do not have permission to access this script", pathname);
       }
@@ -591,5 +593,5 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Reel Script Manager Backend REST API running at http://localhost:${PORT}/api`);
+  console.log(`Reel Script Manager Fullstack Server running at http://localhost:${PORT}`);
 });
