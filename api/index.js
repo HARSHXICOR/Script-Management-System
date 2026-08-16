@@ -1,11 +1,26 @@
 /**
  * Vercel Serverless Function entry point for all /api/* routes
+ * Connects directly to Neon PostgreSQL database.
  */
-import fs from "node:fs";
-import path from "node:path";
 import crypto from "node:crypto";
+import pg from "pg";
+
+const { Pool } = pg;
 
 const JWT_SECRET = process.env.JWT_SECRET || "reel-script-manager-super-secret-key-2026";
+const DATABASE_URL = process.env.DATABASE_URL || "postgresql://neondb_owner:npg_DJxSquN1X2tH@ep-raspy-wildflower-ax6hpdo7.c-4.us-east-2.aws.neon.tech/neondb?sslmode=require";
+
+let pool = null;
+
+function getPool() {
+  if (!pool) {
+    pool = new Pool({
+      connectionString: DATABASE_URL,
+      ssl: { rejectUnauthorized: false },
+    });
+  }
+  return pool;
+}
 
 function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString("hex");
@@ -54,33 +69,6 @@ function verifyJwt(token) {
   }
 }
 
-const SEED_CATEGORIES = [
-  { id: 1, name: "Food", createdAt: new Date(Date.now() - 36000000).toISOString() },
-  { id: 2, name: "Cafe", createdAt: new Date(Date.now() - 36000000).toISOString() },
-  { id: 3, name: "Car", createdAt: new Date(Date.now() - 36000000).toISOString() },
-  { id: 4, name: "Commercial Ad", createdAt: new Date(Date.now() - 36000000).toISOString() },
-  { id: 5, name: "Meme / Relatable", createdAt: new Date(Date.now() - 36000000).toISOString() },
-  { id: 6, name: "City Updates", createdAt: new Date(Date.now() - 36000000).toISOString() },
-  { id: 7, name: "Retail", createdAt: new Date(Date.now() - 36000000).toISOString() },
-  { id: 8, name: "Education", createdAt: new Date(Date.now() - 36000000).toISOString() },
-  { id: 9, name: "Hospitality", createdAt: new Date(Date.now() - 36000000).toISOString() },
-  { id: 10, name: "Fashion", createdAt: new Date(Date.now() - 36000000).toISOString() },
-  { id: 11, name: "Travel", createdAt: new Date(Date.now() - 36000000).toISOString() },
-  { id: 12, name: "Technology", createdAt: new Date(Date.now() - 36000000).toISOString() },
-  { id: 13, name: "Beauty", createdAt: new Date(Date.now() - 36000000).toISOString() },
-  { id: 14, name: "Lifestyle", createdAt: new Date(Date.now() - 36000000).toISOString() },
-  { id: 15, name: "Other", createdAt: new Date(Date.now() - 36000000).toISOString() },
-];
-
-let globalDb = {
-  users: [],
-  categories: SEED_CATEGORIES,
-  scripts: [],
-  nextCatId: 100,
-  nextScriptId: 1,
-  nextUserId: 1,
-};
-
 function sendJson(res, status, data) {
   res.writeHead(status, {
     "Content-Type": "application/json",
@@ -117,7 +105,7 @@ function readBody(req) {
   });
 }
 
-function extractAuthenticatedUser(req) {
+async function extractAuthenticatedUser(req, db) {
   const authHeader = req.headers.authorization || req.headers.Authorization;
   if (!authHeader || !authHeader.toLowerCase().startsWith("bearer ")) {
     return null;
@@ -125,9 +113,14 @@ function extractAuthenticatedUser(req) {
   const token = authHeader.slice(7).trim();
   const verified = verifyJwt(token);
   if (!verified) return null;
-  const user = globalDb.users.find((u) => u.id === verified.userId);
-  if (!user) return null;
-  return { id: user.id, name: user.name, email: user.email };
+
+  try {
+    const res = await db.query("SELECT id, name, email FROM users WHERE id = $1", [verified.userId]);
+    if (res.rows.length === 0) return null;
+    return res.rows[0];
+  } catch {
+    return null;
+  }
 }
 
 export default async function handler(req, res) {
@@ -137,6 +130,7 @@ export default async function handler(req, res) {
     pathname = `/api${pathname}`;
   }
   const method = req.method ? req.method.toUpperCase() : "GET";
+  const db = getPool();
 
   if (method === "OPTIONS") {
     res.writeHead(204, {
@@ -148,7 +142,9 @@ export default async function handler(req, res) {
   }
 
   try {
+    // ----------------------------------------------------
     // POST /api/auth/signup
+    // ----------------------------------------------------
     if (pathname === "/api/auth/signup" && method === "POST") {
       const body = await readBody(req);
       const { name, email, password } = body;
@@ -163,29 +159,25 @@ export default async function handler(req, res) {
       }
 
       const normalizedEmail = email.trim().toLowerCase();
-      const existing = globalDb.users.find((u) => u.email.toLowerCase() === normalizedEmail);
-      if (existing) {
+      const pwdHash = hashPassword(password);
+
+      const check = await db.query("SELECT id FROM users WHERE email = $1", [normalizedEmail]);
+      if (check.rows.length > 0) {
         return sendError(res, 409, "CONFLICT", "User with this email already exists", pathname);
       }
 
-      const newUser = {
-        id: globalDb.nextUserId++,
-        name: name.trim(),
-        email: normalizedEmail,
-        passwordHash: hashPassword(password),
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-
-      globalDb.users.push(newUser);
+      const insertRes = await db.query(
+        "INSERT INTO users (name, email, password_hash, created_at, updated_at) VALUES ($1, $2, $3, NOW(), NOW()) RETURNING id, name, email",
+        [name.trim(), normalizedEmail, pwdHash]
+      );
+      const newUser = insertRes.rows[0];
       const token = generateJwt({ userId: newUser.id, email: newUser.email });
-      return sendJson(res, 201, {
-        token,
-        user: { id: newUser.id, name: newUser.name, email: newUser.email },
-      });
+      return sendJson(res, 201, { token, user: newUser });
     }
 
+    // ----------------------------------------------------
     // POST /api/auth/login
+    // ----------------------------------------------------
     if (pathname === "/api/auth/login" && method === "POST") {
       const body = await readBody(req);
       const { email, password } = body;
@@ -194,11 +186,16 @@ export default async function handler(req, res) {
       }
 
       const normalizedEmail = String(email).trim().toLowerCase();
-      const user = globalDb.users.find((u) => u.email.toLowerCase() === normalizedEmail);
-      if (!user || !verifyPassword(String(password), user.passwordHash)) {
+      const queryRes = await db.query(
+        "SELECT id, name, email, password_hash FROM users WHERE email = $1",
+        [normalizedEmail]
+      );
+
+      if (queryRes.rows.length === 0 || !verifyPassword(String(password), queryRes.rows[0].password_hash)) {
         return sendError(res, 401, "UNAUTHORIZED", "Invalid email or password", pathname);
       }
 
+      const user = queryRes.rows[0];
       const token = generateJwt({ userId: user.id, email: user.email });
       return sendJson(res, 200, {
         token,
@@ -206,63 +203,65 @@ export default async function handler(req, res) {
       });
     }
 
+    // ----------------------------------------------------
     // GET /api/auth/me
+    // ----------------------------------------------------
     if (pathname === "/api/auth/me" && method === "GET") {
-      const authUser = extractAuthenticatedUser(req);
+      const authUser = await extractAuthenticatedUser(req, db);
       if (!authUser) {
         return sendError(res, 401, "UNAUTHORIZED", "Unauthorized: invalid or missing token", pathname);
       }
       return sendJson(res, 200, authUser);
     }
 
-    // GET /api/categories
+    // ----------------------------------------------------
+    // CATEGORIES: Shared System Taxonomy
+    // ----------------------------------------------------
     if (pathname === "/api/categories" && method === "GET") {
-      return sendJson(res, 200, globalDb.categories);
+      const catRes = await db.query("SELECT id, name, created_at as \"createdAt\" FROM categories ORDER BY id ASC");
+      return sendJson(res, 200, catRes.rows);
     }
 
-    // POST /api/categories
     if (pathname === "/api/categories" && method === "POST") {
       const body = await readBody(req);
       if (!body.name || typeof body.name !== "string" || !body.name.trim()) {
         return sendError(res, 400, "VALIDATION_ERROR", "Category name is required", pathname);
       }
-      const newCat = {
-        id: globalDb.nextCatId++,
-        name: body.name.trim(),
-        createdAt: new Date().toISOString(),
-      };
-      globalDb.categories.push(newCat);
-      return sendJson(res, 201, newCat);
+      const insertCat = await db.query(
+        "INSERT INTO categories (name, created_at) VALUES ($1, NOW()) RETURNING id, name, created_at as \"createdAt\"",
+        [body.name.trim()]
+      );
+      return sendJson(res, 201, insertCat.rows[0]);
     }
 
     const catMatch = pathname.match(/^\/api\/categories\/(\d+)$/);
     if (catMatch && method === "PUT") {
       const catId = Number(catMatch[1]);
       const body = await readBody(req);
-      const catIndex = globalDb.categories.findIndex((c) => c.id === catId);
-      if (catIndex === -1) {
-        return sendError(res, 404, "NOT_FOUND", `Category with id ${catId} not found`, pathname);
-      }
       if (!body.name || typeof body.name !== "string" || !body.name.trim()) {
         return sendError(res, 400, "VALIDATION_ERROR", "Category name is required", pathname);
       }
-      globalDb.categories[catIndex].name = body.name.trim();
-      return sendJson(res, 200, globalDb.categories[catIndex]);
+      const updateRes = await db.query(
+        "UPDATE categories SET name = $1 WHERE id = $2 RETURNING id, name, created_at as \"createdAt\"",
+        [body.name.trim(), catId]
+      );
+      if (updateRes.rows.length === 0) {
+        return sendError(res, 404, "NOT_FOUND", `Category with id ${catId} not found`, pathname);
+      }
+      return sendJson(res, 200, updateRes.rows[0]);
     }
 
     if (catMatch && method === "DELETE") {
       const catId = Number(catMatch[1]);
-      const catIndex = globalDb.categories.findIndex((c) => c.id === catId);
-      if (catIndex === -1) {
-        return sendError(res, 404, "NOT_FOUND", `Category with id ${catId} not found`, pathname);
-      }
-      globalDb.categories.splice(catIndex, 1);
+      await db.query("DELETE FROM categories WHERE id = $1", [catId]);
       res.writeHead(204, { "Access-Control-Allow-Origin": "*" });
       return res.end();
     }
 
-    // User-scoped scripts
-    const authUser = extractAuthenticatedUser(req);
+    // ----------------------------------------------------
+    // SCRIPTS: User Ownership Enforced
+    // ----------------------------------------------------
+    const authUser = await extractAuthenticatedUser(req, db);
     const activeUserId = authUser ? authUser.id : 1;
 
     // GET /api/scripts/search
@@ -273,24 +272,45 @@ export default async function handler(req, res) {
       const page = parseInt(url.searchParams.get("page") || "0", 10);
       const size = parseInt(url.searchParams.get("size") || "20", 10);
 
-      let filtered = globalDb.scripts.filter((s) => s.userId === activeUserId && !s.deleted);
+      let query = `
+        SELECT s.id, s.title, s.script_text as "scriptText", s.status, s.created_at as "createdAt", s.updated_at as "updatedAt",
+               c.id as "cat_id", c.name as "cat_name", c.created_at as "cat_created"
+        FROM scripts s
+        LEFT JOIN categories c ON s.category_id = c.id
+        WHERE s.user_id = $1 AND s.deleted = FALSE
+      `;
+      const params = [activeUserId];
+      let paramIdx = 2;
+
       if (q) {
-        filtered = filtered.filter(
-          (s) =>
-            s.title.toLowerCase().includes(q) ||
-            s.scriptText.toLowerCase().includes(q)
-        );
+        query += ` AND (LOWER(s.title) LIKE $${paramIdx} OR LOWER(s.script_text) LIKE $${paramIdx})`;
+        params.push(`%${q}%`);
+        paramIdx++;
       }
+
       if (categoryId !== undefined && !isNaN(categoryId)) {
-        filtered = filtered.filter((s) => s.category && s.category.id === categoryId);
+        query += ` AND s.category_id = $${paramIdx}`;
+        params.push(categoryId);
+        paramIdx++;
       }
 
-      filtered.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+      query += " ORDER BY s.updated_at DESC";
 
-      const totalElements = filtered.length;
+      const allResults = await db.query(query, params);
+      const totalElements = allResults.rows.length;
       const totalPages = Math.max(1, Math.ceil(totalElements / size));
       const start = page * size;
-      const content = filtered.slice(start, start + size);
+      const pageRows = allResults.rows.slice(start, start + size);
+
+      const content = pageRows.map((r) => ({
+        id: r.id,
+        title: r.title,
+        scriptText: r.scriptText,
+        status: r.status,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+        category: r.cat_id ? { id: r.cat_id, name: r.cat_name, createdAt: r.cat_created } : null,
+      }));
 
       return sendJson(res, 200, { content, page, size, totalElements, totalPages });
     }
@@ -300,13 +320,34 @@ export default async function handler(req, res) {
       const page = parseInt(url.searchParams.get("page") || "0", 10);
       const size = parseInt(url.searchParams.get("size") || "20", 10);
 
-      const userScripts = globalDb.scripts.filter((s) => s.userId === activeUserId && !s.deleted);
-      userScripts.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-
-      const totalElements = userScripts.length;
+      const countRes = await db.query(
+        "SELECT COUNT(*) FROM scripts WHERE user_id = $1 AND deleted = FALSE",
+        [activeUserId]
+      );
+      const totalElements = parseInt(countRes.rows[0].count, 10);
       const totalPages = Math.max(1, Math.ceil(totalElements / size));
-      const start = page * size;
-      const content = userScripts.slice(start, start + size);
+      const offset = page * size;
+
+      const dataRes = await db.query(
+        `SELECT s.id, s.title, s.script_text as "scriptText", s.status, s.created_at as "createdAt", s.updated_at as "updatedAt",
+                c.id as "cat_id", c.name as "cat_name", c.created_at as "cat_created"
+         FROM scripts s
+         LEFT JOIN categories c ON s.category_id = c.id
+         WHERE s.user_id = $1 AND s.deleted = FALSE
+         ORDER BY s.updated_at DESC
+         LIMIT $2 OFFSET $3`,
+        [activeUserId, size, offset]
+      );
+
+      const content = dataRes.rows.map((r) => ({
+        id: r.id,
+        title: r.title,
+        scriptText: r.scriptText,
+        status: r.status,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+        category: r.cat_id ? { id: r.cat_id, name: r.cat_name, createdAt: r.cat_created } : null,
+      }));
 
       return sendJson(res, 200, { content, page, size, totalElements, totalPages });
     }
@@ -326,44 +367,59 @@ export default async function handler(req, res) {
 
       const validStatuses = ["DRAFT", "READY", "PUBLISHED", "ARCHIVED"];
       const status = validStatuses.includes(body.status) ? body.status : "DRAFT";
+      const categoryId = body.categoryId ? Number(body.categoryId) : null;
+
+      const insertRes = await db.query(
+        `INSERT INTO scripts (user_id, title, script_text, category_id, status, deleted, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, FALSE, NOW(), NOW())
+         RETURNING id, title, script_text as "scriptText", status, created_at as "createdAt", updated_at as "updatedAt"`,
+        [activeUserId, body.title.trim(), body.scriptText.trim(), categoryId, status]
+      );
+      const newScript = insertRes.rows[0];
 
       let category = null;
-      if (body.categoryId) {
-        category = globalDb.categories.find((c) => c.id === Number(body.categoryId)) || null;
+      if (categoryId) {
+        const catRes = await db.query("SELECT id, name, created_at as \"createdAt\" FROM categories WHERE id = $1", [categoryId]);
+        if (catRes.rows.length > 0) category = catRes.rows[0];
       }
 
-      const newScript = {
-        id: globalDb.nextScriptId++,
-        userId: activeUserId,
-        title: body.title.trim(),
-        scriptText: body.scriptText.trim(),
-        category,
-        status,
-        deleted: false,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-
-      globalDb.scripts.unshift(newScript);
-      return sendJson(res, 201, newScript);
+      return sendJson(res, 201, { ...newScript, category });
     }
 
-    // Single script operations: GET, PUT, DELETE
+    // Single script: GET, PUT, DELETE
     const scriptMatch = pathname.match(/^\/api\/scripts\/(\d+)$/);
     if (scriptMatch) {
       const scriptId = Number(scriptMatch[1]);
-      const scriptIndex = globalDb.scripts.findIndex((s) => s.id === scriptId && !s.deleted);
 
-      if (scriptIndex === -1) {
+      const scriptRes = await db.query(
+        `SELECT s.id, s.user_id, s.title, s.script_text as "scriptText", s.status, s.deleted, s.created_at as "createdAt", s.updated_at as "updatedAt",
+                c.id as "cat_id", c.name as "cat_name", c.created_at as "cat_created"
+         FROM scripts s
+         LEFT JOIN categories c ON s.category_id = c.id
+         WHERE s.id = $1 AND s.deleted = FALSE`,
+        [scriptId]
+      );
+
+      if (scriptRes.rows.length === 0) {
         return sendError(res, 404, "NOT_FOUND", `Script with id ${scriptId} not found`, pathname);
       }
 
-      const script = globalDb.scripts[scriptIndex];
-      if (script.userId !== activeUserId) {
+      const script = scriptRes.rows[0];
+      if (script.user_id !== activeUserId) {
         return sendError(res, 403, "FORBIDDEN", "You do not have permission to access this script", pathname);
       }
 
-      if (method === "GET") return sendJson(res, 200, script);
+      if (method === "GET") {
+        return sendJson(res, 200, {
+          id: script.id,
+          title: script.title,
+          scriptText: script.scriptText,
+          status: script.status,
+          createdAt: script.createdAt,
+          updatedAt: script.updatedAt,
+          category: script.cat_id ? { id: script.cat_id, name: script.cat_name, createdAt: script.cat_created } : null,
+        });
+      }
 
       if (method === "PUT") {
         const body = await readBody(req);
@@ -379,27 +435,30 @@ export default async function handler(req, res) {
 
         const validStatuses = ["DRAFT", "READY", "PUBLISHED", "ARCHIVED"];
         const status = validStatuses.includes(body.status) ? body.status : script.status;
+        const categoryId = body.categoryId ? Number(body.categoryId) : null;
+
+        const updateRes = await db.query(
+          `UPDATE scripts
+           SET title = $1, script_text = $2, category_id = $3, status = $4, updated_at = NOW()
+           WHERE id = $5 AND user_id = $6
+           RETURNING id, title, script_text as "scriptText", status, created_at as "createdAt", updated_at as "updatedAt"`,
+          [body.title.trim(), body.scriptText.trim(), categoryId, status, scriptId, activeUserId]
+        );
 
         let category = null;
-        if (body.categoryId) {
-          category = globalDb.categories.find((c) => c.id === Number(body.categoryId)) || null;
+        if (categoryId) {
+          const catRes = await db.query("SELECT id, name, created_at as \"createdAt\" FROM categories WHERE id = $1", [categoryId]);
+          if (catRes.rows.length > 0) category = catRes.rows[0];
         }
 
-        globalDb.scripts[scriptIndex] = {
-          ...script,
-          title: body.title.trim(),
-          scriptText: body.scriptText.trim(),
-          category,
-          status,
-          updatedAt: new Date().toISOString(),
-        };
-
-        return sendJson(res, 200, globalDb.scripts[scriptIndex]);
+        return sendJson(res, 200, { ...updateRes.rows[0], category });
       }
 
       if (method === "DELETE") {
-        globalDb.scripts[scriptIndex].deleted = true;
-        globalDb.scripts[scriptIndex].updatedAt = new Date().toISOString();
+        await db.query("UPDATE scripts SET deleted = TRUE, updated_at = NOW() WHERE id = $1 AND user_id = $2", [
+          scriptId,
+          activeUserId,
+        ]);
         res.writeHead(204, { "Access-Control-Allow-Origin": "*" });
         return res.end();
       }
