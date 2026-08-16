@@ -111,22 +111,11 @@ function initDb() {
     try {
       const data = JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
       if (!data.users) data.users = [];
-      if (data.users.length === 0) {
-        data.users.push({
-          id: 1,
-          name: "Harsh (Kharagpur Blogger)",
-          email: "demo@example.com",
-          passwordHash: hashPassword("password123"),
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        });
-      }
-      if (data.scripts) {
-        data.scripts.forEach((s) => {
-          if (!s.userId) s.userId = 1;
-        });
-      }
-      if (!data.nextUserId) data.nextUserId = 100;
+      if (!data.scripts) data.scripts = [];
+      if (!data.categories || data.categories.length === 0) data.categories = SEED_CATEGORIES;
+      if (!data.nextUserId) data.nextUserId = 1;
+      if (!data.nextScriptId) data.nextScriptId = 1;
+      if (!data.nextCatId) data.nextCatId = 100;
       saveDb(data);
       return data;
     } catch {
@@ -135,46 +124,12 @@ function initDb() {
   }
 
   const initial = {
-    users: [
-      {
-        id: 1,
-        name: "Harsh (Kharagpur Blogger)",
-        email: "demo@example.com",
-        passwordHash: hashPassword("password123"),
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-    ],
+    users: [],
     categories: SEED_CATEGORIES,
-    scripts: [
-      {
-        id: 1,
-        userId: 1,
-        title: "Best Cafe in Kharagpur",
-        scriptText:
-          "Guys, today I found one of the best cafes in Kharagpur and I couldn't wait to tell you about it! 🔥\n\nIt's called Brew & Bites and let me tell you — the vibe is absolutely immaculate. Cozy seating, fairy lights, and that smell of freshly brewed coffee the moment you walk in.\n\nThey have an amazing cold brew and these absolutely insane croissants that you just have to try. The price is super reasonable too — a full breakfast under ₹200.\n\nIf you're a student here or just visiting Kharagpur, this place is a must-visit. Link in bio for the location!\n\n#KharagpurCafe #BrewAndBites #KGPLife #CafeKharagpur",
-        category: SEED_CATEGORIES[1],
-        status: "READY",
-        deleted: false,
-        createdAt: new Date(Date.now() - 18000000).toISOString(),
-        updatedAt: new Date(Date.now() - 7200000).toISOString(),
-      },
-      {
-        id: 2,
-        userId: 1,
-        title: "New Burger Launch at City Square",
-        scriptText:
-          "If you're a burger lover in Kharagpur, you CANNOT miss this! 🍔\n\nCity Square just dropped their new Smoky BBQ Loaded Burger and I was literally shaking after the first bite. Double patty, smoked bacon, crispy onion rings, and their secret sauce — all for just ₹249.\n\nThey're running a launch offer too — buy one get one free on weekends only. I'd say get there before the crowd figures this out.\n\nComment 'BURGER' below if you want the full address and timing!\n\n#KharagpurFood #BurgerKharagpur #CitySquare #FoodReel",
-        category: SEED_CATEGORIES[0],
-        status: "DRAFT",
-        deleted: false,
-        createdAt: new Date(Date.now() - 86400000).toISOString(),
-        updatedAt: new Date(Date.now() - 86400000).toISOString(),
-      },
-    ],
+    scripts: [],
     nextCatId: 100,
-    nextScriptId: 100,
-    nextUserId: 100,
+    nextScriptId: 1,
+    nextUserId: 1,
   };
   saveDb(initial);
   return initial;

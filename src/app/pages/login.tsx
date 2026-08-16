@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Link, useNavigate, useLocation } from "react-router";
-import { Film, Lock, Mail, ArrowRight, Sparkles } from "lucide-react";
+import { Film, Lock, Mail, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "../context/auth-context";
 
@@ -45,11 +45,6 @@ export function LoginPage() {
     } finally {
       setLoading(false);
     }
-  }
-
-  function handleFillDemo() {
-    setEmail("demo@example.com");
-    setPassword("password123");
   }
 
   return (
@@ -134,24 +129,6 @@ export function LoginPage() {
               )}
             </button>
           </form>
-
-          {/* Dev Demo Account helper */}
-          <div className="mt-6 pt-5 border-t border-border">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">Dev Demo Account</span>
-              <button
-                type="button"
-                onClick={handleFillDemo}
-                className="inline-flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 transition-colors cursor-pointer"
-              >
-                <Sparkles size={12} />
-                Fill Demo Credentials
-              </button>
-            </div>
-            <p className="mt-1 text-[11px] text-muted-foreground/80 font-mono">
-              demo@example.com / password123
-            </p>
-          </div>
 
           <p className="mt-6 text-center text-xs text-muted-foreground">
             Don't have an account?{" "}
