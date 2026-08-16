@@ -232,6 +232,42 @@ function serveStaticFile(req, res, pathname) {
   });
 }
 
+function serveSwaggerUi(res) {
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Reel Script Manager — Swagger UI</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5.18.2/swagger-ui.css" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <style>
+    body { margin: 0; background: #0f172a; }
+    .swagger-ui .topbar { display: none; }
+  </style>
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist@5.18.2/swagger-ui-bundle.js" crossorigin></script>
+  <script src="https://unpkg.com/swagger-ui-dist@5.18.2/swagger-ui-standalone-preset.js" crossorigin></script>
+  <script>
+    window.onload = () => {
+      window.ui = SwaggerUIBundle({
+        url: '/api/docs',
+        dom_id: '#swagger-ui',
+        presets: [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset],
+        layout: "BaseLayout",
+        deepLinking: true,
+        persistAuthorization: true
+      });
+    };
+  </script>
+</body>
+</html>`;
+  res.writeHead(200, { "Content-Type": "text/html" });
+  res.end(html);
+}
+
 const server = http.createServer(async (req, res) => {
   const parsedUrl = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
   const pathname = parsedUrl.pathname;
@@ -246,6 +282,17 @@ const server = http.createServer(async (req, res) => {
       "Access-Control-Allow-Headers": "Content-Type, Authorization",
     });
     return res.end();
+  }
+
+  // ----------------------------------------------------
+  // Swagger UI & OpenAPI Specification routes
+  // ----------------------------------------------------
+  if (pathname === "/swagger" || pathname === "/swagger-ui" || pathname === "/docs" || pathname === "/api/swagger") {
+    return serveSwaggerUi(res);
+  }
+
+  if (pathname === "/api/docs" || pathname === "/api/openapi.json" || pathname === "/swagger.json") {
+    return sendJson(res, 200, swaggerDocument);
   }
 
   if (!pathname.startsWith("/api")) {
