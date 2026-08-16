@@ -28,17 +28,6 @@ export function AppHeader() {
         </Link>
 
         <nav className="flex items-center gap-2">
-          <a
-            href="/swagger"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors rounded-md hover:bg-secondary"
-            title="Interactive Swagger API Documentation"
-          >
-            <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800">
-              API Docs
-            </span>
-          </a>
           <Link
             to="/categories"
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors rounded-md hover:bg-secondary"
